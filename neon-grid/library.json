@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "title": "KernelGreyBeret — Neon Grid MIDI Radio",
+  "description": "Self-hosted MIDI scores. Audio is synthesized locally by Neon Grid Infinite Jukebox. Add rights-verified scores beneath tracks/ and update this manifest.",
+  "tracks": [
+    {
+      "id": "kernel-radio-check",
+      "title": "Kernel Radio Check · E-flat Major",
+      "artist": "Neon Grid Studio",
+      "genre": "other",
+      "file": "tracks/kernel-radio-check.mid",
+      "license": "Original demonstration composition"
+    },
+    {
+      "id": "neon-workday-funk",
+      "title": "Neon Workday Funk",
+      "artist": "Neon Grid Studio",
+      "genre": "funk",
+      "file": "tracks/neon-workday-funk.mid",
+      "license": "Original demonstration composition"
+    },
+    {
+      "id": "night-shift-nocturne",
+      "title": "Night Shift Nocturne",
+      "artist": "Neon Grid Studio",
+      "genre": "classical",
+      "file": "tracks/night-shift-nocturne.mid",
+      "license": "Original demonstration composition"
+    }
+  ]
+}
