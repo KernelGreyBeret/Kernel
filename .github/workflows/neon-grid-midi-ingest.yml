@@ -1,0 +1,96 @@
+name: Publish Neon Grid MIDI ZIP
+
+on:
+  push:
+    branches: [main]
+    paths: ['neon-grid/upload/*.zip']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: neon-grid-midi-ingest
+  cancel-in-progress: false
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install MIDI parser
+        run: python -m pip install --disable-pip-version-check mido==1.3.3
+      - name: Extract valid scores and update public manifest
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import io, json, re, zipfile, hashlib, mido
+          root=Path('neon-grid')
+          inbox=root/'upload'
+          tracks=root/'tracks'
+          tracks.mkdir(parents=True,exist_ok=True)
+          manifest=root/'library.json'
+          doc=json.loads(manifest.read_text(encoding='utf-8')) if manifest.exists() else {'version':1,'tracks':[]}
+          entries={t['file']:t for t in doc.get('tracks',[]) if isinstance(t,dict) and t.get('file')}
+          def slug(s):
+              return re.sub(r'[^a-z0-9]+','-',s.lower()).strip('-')[:82]
+          labels={'classical_duo':'String Duo','classical_quartet':'String Quartet','classical_piano':'Piano Solo','jpop_3piece':'Pop Trio','rock_intense':'Heavy Rock','rock_standard':'Rock Band'}
+          def describe(name):
+              match=re.fullmatch(r'(classical_duo|classical_quartet|classical_piano|jpop_3piece|rock_intense|rock_standard)_(\d+)',name)
+              return (labels[match[1]]+' No. '+match[2]) if match else re.sub('[_-]+',' ',name).strip().title()
+          def genre(name):
+              if name.startswith('rock_'):return 'rock'
+              if name.startswith('jpop_'):return 'pop'
+              if name.lower().startswith(('jazz','entertainer','maple','bethena','magnetic','pineapple','elite','winners','wallstreet')):return 'funk'
+              return 'classical'
+          def artist(name):
+              if re.match(r'^(classical_duo|classical_quartet|classical_piano|jpop_3piece|rock_intense|rock_standard)_',name):return 'Keynata Commons'
+              for prefix,who in [('bach','J. S. Bach'),('Bach','J. S. Bach'),('chp','Frédéric Chopin'),('Chop','Frédéric Chopin'),('chopin','Frédéric Chopin'),('mozart','W. A. Mozart'),('Mozart','W. A. Mozart'),('KV','W. A. Mozart'),('k574','W. A. Mozart'),('gymnopedie','Erik Satie'),('debussy','Claude Debussy'),('fur','Ludwig van Beethoven'),('moonlight','Ludwig van Beethoven'),('pathetique','Ludwig van Beethoven'),('Dans','Edvard Grieg')]:
+                  if name.startswith(prefix):return who
+              return 'Public-domain / CC0 collection'
+          added=0
+          skipped=0
+          archives=sorted(inbox.glob('*.zip'))
+          for archive in archives:
+              with zipfile.ZipFile(archive) as z:
+                  midi_files=[m for m in z.infolist() if not m.is_dir() and m.filename.lower().endswith(('.mid','.midi'))]
+                  if len(midi_files)>3000 or sum(m.file_size for m in midi_files)>70*1024*1024:raise ValueError('Oversized MIDI ZIP')
+                  for member in midi_files:
+                      if member.file_size>6*1024*1024:skipped+=1;continue
+                      data=z.read(member)
+                      if not data.startswith(b'MThd'):skipped+=1;continue
+                      try:
+                          music=mido.MidiFile(file=io.BytesIO(data))
+                          notes=sum(1 for tr in music.tracks for event in tr if event.type=='note_on' and event.velocity>0)
+                          if not notes:skipped+=1;continue
+                      except Exception:skipped+=1;continue
+                      stem=Path(member.filename).stem
+                      filename=slug(stem)+'.mid'
+                      destination=tracks/filename
+                      if destination.exists() and destination.read_bytes()!=data:
+                          filename=slug(stem)[:68]+'-'+hashlib.sha256(data).hexdigest()[:8]+'.mid'
+                          destination=tracks/filename
+                      destination.write_bytes(data)
+                      path='tracks/'+filename
+                      if path not in entries:
+                          cc0=bool(re.match(r'^(classical_duo|classical_quartet|classical_piano|jpop_3piece|rock_intense|rock_standard)_',stem))
+                          entries[path]={'id':slug(stem),'title':describe(stem),'artist':artist(stem),'genre':genre(stem),'file':path,'license':'CC0 1.0' if cc0 else 'Public domain or CC0 — user-supplied'}
+                          added+=1
+              archive.unlink()
+          doc.update(version=1,title='KernelGreyBeret — Neon Grid MIDI Radio',description='MIDI scores only; Neon Grid player HTML is not hosted here.',tracks=sorted(entries.values(),key=lambda t:(t.get('genre',''),t.get('artist',''),t.get('title',''))))
+          manifest.write_text(json.dumps(doc,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print('Uploaded',added,'new MIDI scores;',skipped,'skipped;',len(doc['tracks']),'in library')
+          PY
+      - name: Commit score files and manifest
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A neon-grid/tracks neon-grid/library.json neon-grid/upload
+          if ! git diff --cached --quiet; then
+            git commit -m 'Neon Grid: expand MIDI archive and refresh library'
+            git push origin HEAD:main
+          fi
